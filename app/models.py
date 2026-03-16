@@ -24,7 +24,6 @@ class CourseRequirement(BaseModel):
     units: float | None = None
     required: bool = True
     repeatable: bool | None = None
-    min_grade: str | None = None  # e.g. C for CSCI core
     notes: list[str] = Field(default_factory=list)
 
 

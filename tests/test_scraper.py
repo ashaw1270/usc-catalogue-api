@@ -1,7 +1,7 @@
 """Unit tests for USC catalogue scraper."""
 import pytest
 
-from app.scraper import parse_program_html_v2
+from app.scraper import parse_program_html
 
 
 FIXTURE_DIR = __file__.replace("test_scraper.py", "fixtures")
@@ -14,7 +14,7 @@ def _load_fixture(name: str) -> str:
 
 def test_parse_program_title_and_catalog_year():
     html = _load_fixture("sample_program.html")
-    program = parse_program_html_v2(html, catoid=21, poid=29994, slug="csci-bs")
+    program = parse_program_html(html, catoid=21, poid=29994, slug="csci-bs")
     assert program.title == "Computer Science (BS)"
     assert program.catalog_year == "2025-2026"
     assert program.id.catoid == 21
@@ -24,20 +24,20 @@ def test_parse_program_title_and_catalog_year():
 
 def test_parse_total_units():
     html = _load_fixture("sample_program.html")
-    program = parse_program_html_v2(html, catoid=21, poid=29994)
+    program = parse_program_html(html, catoid=21, poid=29994)
     assert program.total_units_required == 128
 
 
 def test_parse_program_notes():
     html = _load_fixture("sample_program.html")
-    program = parse_program_html_v2(html, catoid=21, poid=29994)
+    program = parse_program_html(html, catoid=21, poid=29994)
     assert any("128 units" in n for n in program.notes)
     assert any("grade of C" in n for n in program.notes)
 
 
 def test_parse_block_titles_and_units():
     html = _load_fixture("sample_program.html")
-    program = parse_program_html_v2(html, catoid=21, poid=29994)
+    program = parse_program_html(html, catoid=21, poid=29994)
     titles = [b.title for b in program.blocks]
     assert "Composition/Writing Requirements (8 Units)" in titles
     assert "General Education (24 Units)" in titles
@@ -53,7 +53,7 @@ def test_parse_block_titles_and_units():
 
 def test_parse_course_requirements():
     html = _load_fixture("sample_program.html")
-    program = parse_program_html_v2(html, catoid=21, poid=29994)
+    program = parse_program_html(html, catoid=21, poid=29994)
     comp_block = next(b for b in program.blocks if "Composition" in b.title)
     from app.models import AllOfNode, CourseNode
 
@@ -77,7 +77,7 @@ def test_parse_course_requirements():
 
 def test_parse_free_electives_block():
     html = _load_fixture("sample_program.html")
-    program = parse_program_html_v2(html, catoid=21, poid=29994)
+    program = parse_program_html(html, catoid=21, poid=29994)
     free_block = next(b for b in program.blocks if "Free Electives" in b.title)
     from app.models import Pool, SelectNode
 
@@ -89,6 +89,6 @@ def test_parse_free_electives_block():
 
 def test_level_and_type_inference():
     html = _load_fixture("sample_program.html")
-    program = parse_program_html_v2(html, catoid=21, poid=29994)
+    program = parse_program_html(html, catoid=21, poid=29994)
     assert program.level == "undergraduate"
     assert program.type == "major"

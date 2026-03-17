@@ -3,7 +3,7 @@ import time
 from typing import Any
 
 from app.config import settings
-from app.models import ProgramV2
+from app.models import Program
 
 
 class ProgramCache:
@@ -11,9 +11,9 @@ class ProgramCache:
 
     def __init__(self, ttl_seconds: int | None = None):
         self._ttl = ttl_seconds if ttl_seconds is not None else settings.cache_ttl_seconds
-        self._store: dict[tuple[int, int], tuple[ProgramV2, float]] = {}
+        self._store: dict[tuple[int, int], tuple[Program, float]] = {}
 
-    def get(self, catoid: int, poid: int, force_refresh: bool = False) -> ProgramV2 | None:
+    def get(self, catoid: int, poid: int, force_refresh: bool = False) -> Program | None:
         """Return cached Program if present and not expired. None otherwise."""
         if force_refresh:
             return None
@@ -26,7 +26,7 @@ class ProgramCache:
             return None
         return program
 
-    def set(self, catoid: int, poid: int, program: ProgramV2) -> None:
+    def set(self, catoid: int, poid: int, program: Program) -> None:
         """Store program in cache."""
         self._store[(catoid, poid)] = (program, time.monotonic())
 

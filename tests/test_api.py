@@ -3,7 +3,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
-from app.scraper import parse_program_html_v2  # noqa: F401
+from app.scraper import parse_program_html  # noqa: F401
 
 
 def _load_fixture(name: str) -> str:
@@ -43,10 +43,10 @@ async def test_get_program_by_slug_unknown():
 async def test_get_program_by_slug_success(monkeypatch, sample_html):
     """Test /programs/csci-bs returns program when scraper returns fixture data."""
     async def mock_fetch(catoid: int, poid: int, slug: str | None = None):
-        return parse_program_html_v2(sample_html, catoid, poid, slug)
+        return parse_program_html(sample_html, catoid, poid, slug)
 
     import app.main as main_module
-    monkeypatch.setattr(main_module, "fetch_program_v2", mock_fetch)
+    monkeypatch.setattr(main_module, "fetch_program", mock_fetch)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -67,10 +67,10 @@ async def test_get_program_by_slug_success(monkeypatch, sample_html):
 @pytest.mark.asyncio
 async def test_get_program_summary(monkeypatch, sample_html):
     async def mock_fetch(catoid: int, poid: int, slug: str | None = None):
-        return parse_program_html_v2(sample_html, catoid, poid, slug)
+        return parse_program_html(sample_html, catoid, poid, slug)
 
     import app.main as main_module
-    monkeypatch.setattr(main_module, "fetch_program_v2", mock_fetch)
+    monkeypatch.setattr(main_module, "fetch_program", mock_fetch)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),

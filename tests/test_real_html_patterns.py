@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from app.models import AnyOfNode, SelectNode
-from app.scraper import parse_program_html_v2
+from app.scraper import parse_program_html
 
 
 def _external_fixture_dir() -> Path:
@@ -39,7 +39,7 @@ def _find_block(program, title_contains: str):
 
 def test_applied_math_upper_division_math_electives_is_select_3():
     html = _load_external("Applied and Computational Mathematics.html")
-    program = parse_program_html_v2(html, catoid=21, poid=0, slug=None)
+    program = parse_program_html(html, catoid=21, poid=0, slug=None)
     block = _find_block(program, "Upper-division Math Electives")
     assert isinstance(block.root, SelectNode)
     assert block.root.min_count == 3
@@ -49,7 +49,7 @@ def test_applied_math_upper_division_math_electives_is_select_3():
 
 def test_applied_math_four_electives_lists_a_b_is_select_and_preserves_constraints_text():
     html = _load_external("Applied and Computational Mathematics.html")
-    program = parse_program_html_v2(html, catoid=21, poid=0, slug=None)
+    program = parse_program_html(html, catoid=21, poid=0, slug=None)
     block = _find_block(program, "Four Electives with Significant Quantitative Content")
     assert isinstance(block.root, SelectNode)
     # Should be “at least 4” (max may be None).
@@ -63,7 +63,7 @@ def test_applied_math_four_electives_lists_a_b_is_select_and_preserves_constrain
 
 def test_lifespan_health_gerontology_electives_units_subject_pool():
     html = _load_external("Lifespan Health.html")
-    program = parse_program_html_v2(html, catoid=21, poid=0, slug=None)
+    program = parse_program_html(html, catoid=21, poid=0, slug=None)
     block = _find_block(program, "Gerontology Electives")
     assert isinstance(block.root, SelectNode)
     assert block.root.min_units in (12.0, 12)
@@ -74,7 +74,7 @@ def test_lifespan_health_gerontology_electives_units_subject_pool():
 
 def test_computer_science_basic_science_is_track_choice_like_anyof():
     html = _load_external("Computer Science.html")
-    program = parse_program_html_v2(html, catoid=21, poid=0, slug=None)
+    program = parse_program_html(html, catoid=21, poid=0, slug=None)
     block = _find_block(program, "Basic Science")
     # Depending on catalogue phrasing this might be AnyOf or Select; accept either but enforce it is not plain AllOf.
     assert isinstance(block.root, (AnyOfNode, SelectNode))

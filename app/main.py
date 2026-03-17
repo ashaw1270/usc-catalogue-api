@@ -4,8 +4,8 @@ from fastapi import FastAPI, HTTPException, Query
 
 from app.cache import get_cache
 from app.catalog_config import resolve_slug
-from app.models import AnyOfNode, AllOfNode, CourseNode, ProgramV2, SelectNode
-from app.scraper import fetch_program_v2
+from app.models import AnyOfNode, AllOfNode, CourseNode, Program, SelectNode
+from app.scraper import fetch_program
 
 app = FastAPI(
     title="USC Catalogue API",
@@ -20,19 +20,19 @@ async def health():
     return {"status": "ok"}
 
 
-async def _get_program(catoid: int, poid: int, slug: str | None, force_refresh: bool) -> ProgramV2:
+async def _get_program(catoid: int, poid: int, slug: str | None, force_refresh: bool) -> Program:
     """Return program from cache or by fetching; slug only used for Program.id.slug."""
     cache = get_cache()
     if not force_refresh:
         cached = cache.get(catoid, poid, force_refresh=False)
         if cached is not None:
             return cached
-    program = await fetch_program_v2(catoid, poid, slug=slug)
+    program = await fetch_program(catoid, poid, slug=slug)
     cache.set(catoid, poid, program)
     return program
 
 
-@app.get("/programs/by-id", response_model=ProgramV2)
+@app.get("/programs/by-id", response_model=Program)
 async def get_program_by_id(
     catoid: int = Query(..., description="Catalog ID (e.g. 21 for 2025-2026)"),
     poid: int = Query(..., description="Program object ID"),
@@ -49,7 +49,7 @@ async def get_program_by_id(
         raise HTTPException(status_code=502, detail=f"Upstream error: {e!s}")
 
 
-@app.get("/programs/{slug}", response_model=ProgramV2)
+@app.get("/programs/{slug}", response_model=Program)
 async def get_program_by_slug(
     slug: str,
     force_refresh: bool = Query(False, description="Bypass cache and re-scrape"),

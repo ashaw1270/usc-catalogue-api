@@ -4,8 +4,8 @@ from fastapi import FastAPI, HTTPException, Query
 
 from app.cache import get_cache
 from app.catalog_config import resolve_slug
-from app.models import Program
-from app.scraper import fetch_program
+from app.models import AnyOfNode, AllOfNode, CourseNode, ProgramV2, SelectNode
+from app.scraper import fetch_program_v2
 
 app = FastAPI(
     title="USC Catalogue API",
@@ -20,19 +20,19 @@ async def health():
     return {"status": "ok"}
 
 
-async def _get_program(catoid: int, poid: int, slug: str | None, force_refresh: bool) -> Program:
+async def _get_program(catoid: int, poid: int, slug: str | None, force_refresh: bool) -> ProgramV2:
     """Return program from cache or by fetching; slug only used for Program.id.slug."""
     cache = get_cache()
     if not force_refresh:
         cached = cache.get(catoid, poid, force_refresh=False)
         if cached is not None:
             return cached
-    program = await fetch_program(catoid, poid, slug=slug)
+    program = await fetch_program_v2(catoid, poid, slug=slug)
     cache.set(catoid, poid, program)
     return program
 
 
-@app.get("/programs/by-id", response_model=Program)
+@app.get("/programs/by-id", response_model=ProgramV2)
 async def get_program_by_id(
     catoid: int = Query(..., description="Catalog ID (e.g. 21 for 2025-2026)"),
     poid: int = Query(..., description="Program object ID"),
@@ -49,7 +49,7 @@ async def get_program_by_id(
         raise HTTPException(status_code=502, detail=f"Upstream error: {e!s}")
 
 
-@app.get("/programs/{slug}", response_model=Program)
+@app.get("/programs/{slug}", response_model=ProgramV2)
 async def get_program_by_slug(
     slug: str,
     force_refresh: bool = Query(False, description="Bypass cache and re-scrape"),
@@ -89,23 +89,32 @@ async def get_program_summary(
     required_count = 0
     elective_count = 0
     total_block_units = 0
+
+    def walk(node):
+        nonlocal required_count, elective_count
+        if isinstance(node, CourseNode):
+            required_count += 1
+            return
+        if isinstance(node, SelectNode):
+            # Select pools are elective-like choices.
+            elective_count += 1
+            for child in node.pool.items:
+                walk(child)
+            return
+        if isinstance(node, AllOfNode):
+            for c in node.children:
+                walk(c)
+            return
+        if isinstance(node, AnyOfNode):
+            elective_count += 1
+            for opt in node.options:
+                walk(opt)
+            return
+
     for block in program.blocks:
         if block.min_units:
             total_block_units += block.min_units
-        for item in block.items:
-            kind = getattr(item, "type", None)
-            if kind == "course":
-                if getattr(item, "required", True):
-                    required_count += 1
-                else:
-                    elective_count += 1
-            elif kind == "course_group":
-                # Count all underlying courses in options (each option is a sequence)
-                options = getattr(item, "options", []) or []
-                if options:
-                    elective_count += sum(len(seq) for seq in options)
-                else:
-                    elective_count += len(getattr(item, "courses", []))
+        walk(block.root)
 
     return {
         "title": program.title,

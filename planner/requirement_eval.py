@@ -198,6 +198,8 @@ BlockStatus = Literal["satisfied", "partial", "unsatisfied", "manual"]
 class BlockEvalSummary(BaseModel):
     id: str
     title: str
+    parent_id: str | None = None
+    parent_title: str | None = None
     kind: Literal["core", "elective", "ge", "pre_major", "supporting", "other"] = "other"
     status: BlockStatus
     detail: str | None = None
@@ -305,6 +307,8 @@ def evaluate_program(
             BlockEvalSummary(
                 id=block.id,
                 title=block.title,
+                parent_id=block.parent_id,
+                parent_title=block.parent_title,
                 kind=block.kind,
                 status=_block_status(ev),
                 detail=ev.detail,

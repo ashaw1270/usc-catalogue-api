@@ -104,6 +104,8 @@ class RequirementBlock(BaseModel):
 
     id: str
     title: str
+    parent_id: str | None = None
+    parent_title: str | None = None
     min_units: int | None = None
     max_units: int | None = None
     kind: Literal[

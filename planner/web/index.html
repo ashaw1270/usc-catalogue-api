@@ -48,7 +48,6 @@
       margin-bottom: 0.65rem;
       background: #fff;
     }
-    .block h3 { margin: 0 0 0.35rem; font-size: 1rem; }
     .badge {
       display: inline-block;
       font-size: 0.75rem;
@@ -89,15 +88,37 @@
       transform: rotate(45deg);
       vertical-align: 0.05em;
     }
-    .ge-summary-inner {
+    /* Title left, status badge right (top-level cards, dropdown summaries, nested rows). */
+    .summary-chevron-wrap {
       display: inline-flex;
-      flex-wrap: wrap;
-      align-items: baseline;
-      gap: 0.5rem 0.75rem;
       width: calc(100% - 1.25rem);
       vertical-align: top;
     }
-    .ge-summary-inner h3 { margin: 0; font-size: 1rem; flex: 1 1 auto; }
+    .summary-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.5rem 0.75rem;
+      width: 100%;
+    }
+    .summary-row h3 {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 650;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .summary-row h4 {
+      margin: 0;
+      font-size: 0.92rem;
+      font-weight: 650;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .summary-row .badge {
+      flex: 0 0 auto;
+      margin-left: auto;
+    }
     .ge-panel {
       padding: 0 1rem 0.85rem;
       border-top: 1px solid #eee;
@@ -111,7 +132,9 @@
       margin-top: 0.5rem;
       background: #fafafa;
     }
-    .ge-sub h4 { margin: 0 0 0.35rem; font-size: 0.92rem; font-weight: 650; }
+    .ge-sub .detail {
+      margin-top: 0.5rem;
+    }
   </style>
 </head>
 <body>
@@ -161,10 +184,10 @@
       return map[status] || status;
     }
 
-    function aggregateGeStatus(categories) {
-      if (!categories || !categories.length) return null;
-      if (categories.every((c) => c.status === "satisfied")) return "satisfied";
-      if (categories.some((c) => c.status === "partial" || c.status === "satisfied")) return "partial";
+    function aggregateRollupStatus(items) {
+      if (!items || !items.length) return null;
+      if (items.every((c) => c.status === "satisfied")) return "satisfied";
+      if (items.some((c) => c.status === "partial" || c.status === "satisfied")) return "partial";
       return "unsatisfied";
     }
 
@@ -173,10 +196,30 @@
     }
 
     function renderNormalBlock(b) {
-      let h = `<div class="block"><h3>${escapeHtml(b.title)}</h3>`;
+      let h = `<div class="block"><div class="summary-row">`;
+      h += `<h3>${escapeHtml(b.title)}</h3>`;
       h += `<span class="${badgeClass(b.status)}">${escapeHtml(statusLabel(b.status))}</span>`;
+      h += `</div>`;
       if (b.detail) h += `<p class="detail">${escapeHtml(b.detail)}</p>`;
       h += `</div>`;
+      return h;
+    }
+
+    function renderParentGroupDropdown(parentTitle, childBlocks) {
+      const outerStatus = aggregateRollupStatus(childBlocks) || "unsatisfied";
+      let inner = "";
+      for (const c of childBlocks) {
+        inner += `<div class="ge-sub"><div class="summary-row">`;
+        inner += `<h4>${escapeHtml(c.title)}</h4>`;
+        inner += `<span class="${badgeClass(c.status)}">${escapeHtml(statusLabel(c.status))}</span>`;
+        inner += `</div>`;
+        if (c.detail) inner += `<p class="detail">${escapeHtml(c.detail)}</p>`;
+        inner += `</div>`;
+      }
+      let h = `<details class="block ge-dropdown"><summary><span class="summary-chevron-wrap"><span class="summary-row">`;
+      h += `<h3>${escapeHtml(parentTitle)}</h3>`;
+      h += `<span class="${badgeClass(outerStatus)}">${escapeHtml(statusLabel(outerStatus))}</span>`;
+      h += `</span></span></summary><div class="ge-panel">${inner}</div></details>`;
       return h;
     }
 
@@ -186,7 +229,7 @@
       if (data.ge_error) {
         outerStatus = "manual";
       } else if (cats.length) {
-        outerStatus = aggregateGeStatus(cats);
+        outerStatus = aggregateRollupStatus(cats);
       } else {
         outerStatus = b.status;
       }
@@ -201,8 +244,10 @@
             data.ge_warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("") + `</ul></div>`;
         }
         for (const g of cats) {
-          inner += `<div class="ge-sub"><h4>${escapeHtml(g.code)} — ${escapeHtml(g.label)}</h4>`;
+          inner += `<div class="ge-sub"><div class="summary-row">`;
+          inner += `<h4>${escapeHtml(g.code)} — ${escapeHtml(g.label)}</h4>`;
           inner += `<span class="${badgeClass(g.status)}">${escapeHtml(statusLabel(g.status))}</span>`;
+          inner += `</div>`;
           if (g.detail) inner += `<p class="detail">${escapeHtml(g.detail)}</p>`;
           inner += `</div>`;
         }
@@ -211,10 +256,10 @@
         if (b.detail) inner += `<p class="detail">${escapeHtml(b.detail)}</p>`;
       }
 
-      let h = `<details class="block ge-dropdown"><summary><span class="ge-summary-inner">`;
+      let h = `<details class="block ge-dropdown"><summary><span class="summary-chevron-wrap"><span class="summary-row">`;
       h += `<h3>${escapeHtml(b.title)}</h3>`;
       h += `<span class="${badgeClass(outerStatus)}">${escapeHtml(statusLabel(outerStatus))}</span>`;
-      h += `</span></summary><div class="ge-panel">${inner}</div></details>`;
+      h += `</span></span></summary><div class="ge-panel">${inner}</div></details>`;
       return h;
     }
 
@@ -264,15 +309,45 @@
         }
 
         let geDropdownDone = false;
+        let parentGroupId = null;
+        let parentGroupTitle = null;
+        let parentGroupChildren = [];
+
+        function flushParentGroup() {
+          if (!parentGroupChildren.length) {
+            parentGroupId = null;
+            parentGroupTitle = null;
+            parentGroupChildren = [];
+            return;
+          }
+          const title = parentGroupTitle || parentGroupId || "Requirements";
+          html += renderParentGroupDropdown(title, parentGroupChildren);
+          parentGroupId = null;
+          parentGroupTitle = null;
+          parentGroupChildren = [];
+        }
+
         for (const b of blocks) {
           if (isGeBlock(b)) {
+            flushParentGroup();
             if (geDropdownDone) continue;
             geDropdownDone = true;
             html += renderGeDropdown(b, data);
             continue;
           }
-          html += renderNormalBlock(b);
+          if (b.parent_id) {
+            if (b.parent_id !== parentGroupId) {
+              flushParentGroup();
+              parentGroupId = b.parent_id;
+              parentGroupTitle = b.parent_title || b.parent_id;
+            }
+            parentGroupChildren.push(b);
+          } else {
+            flushParentGroup();
+            html += renderNormalBlock(b);
+          }
         }
+        flushParentGroup();
 
         $("results").innerHTML = html || "<p>No requirement blocks returned.</p>";
       } catch (e) {

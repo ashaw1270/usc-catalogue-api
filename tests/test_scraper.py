@@ -1,6 +1,7 @@
 """Unit tests for USC catalogue scraper."""
 import pytest
 
+from app.models import AnyOfNode
 from app.scraper import parse_general_education_html, parse_program_html
 
 
@@ -45,6 +46,49 @@ def test_parse_block_titles_and_units():
     assert "Computer Science (46 units)" in titles
     assert "Free Electives (4 Units)" in titles
     assert program.total_units_required == 128
+
+
+def test_pre_major_and_major_group_headers_collapse_with_parent_on_subsections():
+    """h2 Pre-Major / Major Requirements with no course lists collapse; children get parent_*."""
+    html = """<!DOCTYPE html><html><body><td class="block_content">
+    <h1 id="acalog-page-title">Computer Science (BS)</h1>
+    <div class="custom_leftpad_20">
+      <div class="acalog-core">
+        <h2>Pre-Major Requirements (30 Units)</h2><hr>
+      </div>
+      <div class="acalog-core">
+        <h3>Mathematics (16 units)</h3><hr>
+        <ul><li class="acalog-course"><span><a href="#">MATH 125 Calculus</a> Units: 4</span></li></ul>
+      </div>
+      <div class="acalog-core">
+        <h3>Basic Science (8 units)</h3><hr>
+        <p>One of the following sequences:</p>
+      </div>
+      <div class="acalog-core">
+        <h4>Biology:</h4><hr>
+        <ul><li class="acalog-course"><span><a href="#">BISC 120</a> Units: 4</span></li></ul>
+      </div>
+      <div class="acalog-core">
+        <h2>Major Requirements (40 Units)</h2><hr>
+      </div>
+      <div class="acalog-core">
+        <h3>Computer Science (20 units)</h3><hr>
+        <ul><li class="acalog-course"><span><a href="#">CSCI 102L</a> Units: 2</span></li></ul>
+      </div>
+    </div></td></body></html>"""
+    program = parse_program_html(html, catoid=21, poid=1)
+    titles = [b.title for b in program.blocks]
+    assert "Pre-Major Requirements (30 Units)" not in titles
+    assert "Major Requirements (40 Units)" not in titles
+    math = next(b for b in program.blocks if "Mathematics" in b.title)
+    assert math.parent_title == "Pre-Major Requirements (30 Units)"
+    assert math.parent_id == "premajor_requirements_30_units"
+    basic = next(b for b in program.blocks if "Basic Science" in b.title)
+    assert basic.parent_title == "Pre-Major Requirements (30 Units)"
+    assert isinstance(basic.root, AnyOfNode)
+    cs = next(b for b in program.blocks if "Computer Science" in b.title and "20" in b.title)
+    assert cs.parent_title == "Major Requirements (40 Units)"
+    assert cs.parent_id == "major_requirements_40_units"
 
     comp_block = next(b for b in program.blocks if "Composition" in b.title)
     assert comp_block.min_units == 8

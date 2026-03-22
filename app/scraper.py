@@ -100,6 +100,19 @@ def _slug_from_title(title: str) -> str:
     return s or "block"
 
 
+# Top-level catalogue headings that only group subsections (no own course lists), e.g. h2
+# "Pre-Major Requirements (30 Units)". Not used for track/OR containers like "Basic Science".
+_COLLAPSIBLE_PROGRAM_GROUP_HEADING = re.compile(r"^\s*(?:pre-major|major)\s+requirements\b", re.I)
+
+
+def _should_collapse_requirements_group_header(sec: _Section, *, is_container: bool) -> bool:
+    if is_container or sec.uls or not sec.children:
+        return False
+    if sec.level != 2:
+        return False
+    return bool(_COLLAPSIBLE_PROGRAM_GROUP_HEADING.match(sec.title.strip()))
+
+
 def _extract_total_units(description_text: str) -> int | None:
     """Parse 'minimum requirement for the degree is 128 units' or 'Total Units: 128'."""
     m = re.search(r"(?:degree is|total units?:\s*)(\d+)\s*units?", description_text, re.I)
@@ -647,7 +660,13 @@ def parse_program_html(html: str, catoid: int, poid: int, slug: str | None = Non
 
     roots = _build_section_tree_from_core_divs(search_root)
 
-    def emit_blocks(sections: list[_Section], parent_consumes_children: bool = False):
+    def emit_blocks(
+        sections: list[_Section],
+        parent_consumes_children: bool = False,
+        *,
+        subsection_parent_title: str | None = None,
+        subsection_parent_id: str | None = None,
+    ):
         nonlocal total_units
         for sec in sections:
             block_title = sec.title
@@ -673,6 +692,17 @@ def parse_program_html(html: str, catoid: int, poid: int, slug: str | None = Non
                 )
             )
 
+            collapse_group = _should_collapse_requirements_group_header(sec, is_container=is_container)
+
+            if collapse_group:
+                emit_blocks(
+                    sec.children,
+                    parent_consumes_children=False,
+                    subsection_parent_title=sec.title,
+                    subsection_parent_id=_slug_from_title(sec.title),
+                )
+                continue
+
             if not parent_consumes_children:
                 min_u, max_u = _parse_units_from_title(block_title)
                 kind = _block_kind_from_title(block_title)
@@ -681,6 +711,8 @@ def parse_program_html(html: str, catoid: int, poid: int, slug: str | None = Non
                 b = RequirementBlock(
                     id=block_id,
                     title=block_title,
+                    parent_id=subsection_parent_id,
+                    parent_title=subsection_parent_title,
                     min_units=min_u,
                     max_units=max_u,
                     kind=kind,
@@ -692,7 +724,12 @@ def parse_program_html(html: str, catoid: int, poid: int, slug: str | None = Non
                     blocks.append(b)
                     seen.add(b.id)
 
-            emit_blocks(sec.children, parent_consumes_children=is_container or parent_consumes_children)
+            emit_blocks(
+                sec.children,
+                parent_consumes_children=is_container or parent_consumes_children,
+                subsection_parent_title=None,
+                subsection_parent_id=None,
+            )
 
     emit_blocks(roots, parent_consumes_children=False)
 

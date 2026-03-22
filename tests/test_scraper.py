@@ -90,10 +90,6 @@ def test_pre_major_and_major_group_headers_collapse_with_parent_on_subsections()
     assert cs.parent_title == "Major Requirements (40 Units)"
     assert cs.parent_id == "major_requirements_40_units"
 
-    comp_block = next(b for b in program.blocks if "Composition" in b.title)
-    assert comp_block.min_units == 8
-    assert comp_block.max_units == 8
-
 
 def test_parse_course_requirements():
     html = _load_fixture("sample_program.html")

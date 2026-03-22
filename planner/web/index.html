@@ -238,7 +238,7 @@
       if (data.ge_error) {
         inner += `<p class="detail ge-note">${escapeHtml(data.ge_error)}</p>`;
       } else if (cats.length) {
-        inner += `<p class="detail ge-note">Compared to the GE course list (catoid 21, poid 29462)${data.ge_catalog_year ? " — " + escapeHtml(data.ge_catalog_year) : ""}. Cross-counting limits between areas are not enforced here.</p>`;
+        inner += `<p class="detail ge-note">Compared to the GE course list (catoid 21, poid 29462)${data.ge_catalog_year ? " — " + escapeHtml(data.ge_catalog_year) : ""}. Courses already counted toward another program requirement are excluded. Up to two GE areas may share a course only when the catalogue overlap rules allow (e.g. approved GE-B/GE-H or GE-C/GE-G pairs).</p>`;
         if (data.ge_warnings && data.ge_warnings.length) {
           inner += `<div class="warnings ge-warn-inner"><strong>GE catalogue warnings</strong><ul>` +
             data.ge_warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("") + `</ul></div>`;

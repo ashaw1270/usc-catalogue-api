@@ -9,6 +9,11 @@ from app.models import (
     AllOfNode,
     AnyOfNode,
     CourseNode,
+    GeCategoryRequirement,
+    GeCrossCountRule,
+    GeListedCourse,
+    GeOverlapPolicy,
+    GeneralEducationCatalog,
     Pool,
     Program,
     ProgramId,
@@ -192,8 +197,9 @@ def test_evaluate_general_education_phil_partial_and_g_satisfied(sample_ge_html)
     assert by_code["GE-B"].required_count == 2
     assert by_code["GE-B"].matched_count == 1
     assert by_code["GE-B"].status == "partial"
-    assert by_code["GE-G"].matched_count == 1
-    assert by_code["GE-G"].status == "satisfied"
+    # PHIL is dual-listed on GE-B and GE-G, but overlap policy only allows B–H and C–G pairs.
+    assert by_code["GE-G"].matched_count == 0
+    assert by_code["GE-G"].status == "unsatisfied"
 
 
 def test_evaluate_general_education_hist_double_listing(sample_ge_html):
@@ -202,7 +208,86 @@ def test_evaluate_general_education_hist_double_listing(sample_ge_html):
     by_code = {r.code: r for r in rows}
     assert by_code["GE-C"].matched_count == 1
     assert by_code["GE-C"].status == "partial"
-    assert by_code["GE-H"].status == "satisfied"
+    # HIST is on GE-C and GE-H; C–H is not an allowed dual-count pair.
+    assert by_code["GE-H"].matched_count == 0
+    assert by_code["GE-H"].status == "unsatisfied"
+
+
+def test_ge_double_count_when_overlap_policy_allows_pair():
+    policy = GeOverlapPolicy(
+        allowed_cross_count_rules=[
+            GeCrossCountRule(
+                source_category="GE-B",
+                target_category="GE-H",
+                max_shared_courses=1,
+            ),
+        ],
+        no_other_double_counting=True,
+    )
+    ge = GeneralEducationCatalog(
+        catoid=1,
+        poid=1,
+        catalog_year="2025-2026",
+        source_url="",
+        categories=[
+            GeCategoryRequirement(
+                code="GE-B",
+                label="B",
+                required_count=1,
+                courses=[GeListedCourse(course_id="HIST 211gp")],
+            ),
+            GeCategoryRequirement(
+                code="GE-H",
+                label="H",
+                required_count=1,
+                courses=[GeListedCourse(course_id="HIST 211gp")],
+            ),
+        ],
+        overlap_policy=policy,
+    )
+    rows = {r.code: r for r in evaluate_general_education(ge, ["HIST 211gp"])}
+    assert rows["GE-B"].matched_count == 1
+    assert rows["GE-H"].matched_count == 1
+    assert rows["GE-B"].status == "satisfied"
+    assert rows["GE-H"].status == "satisfied"
+
+
+def test_same_course_cannot_satisfy_two_program_blocks():
+    prog = _minimal_program(
+        blocks=[
+            RequirementBlock(
+                id="a",
+                title="Block A",
+                root=CourseNode(course_id="X 100"),
+            ),
+            RequirementBlock(
+                id="b",
+                title="Block B",
+                root=CourseNode(course_id="X 100"),
+            ),
+        ],
+    )
+    r = evaluate_program(prog, ["X 100"])
+    assert r.blocks[0].status == "satisfied"
+    assert r.blocks[1].status == "unsatisfied"
+
+
+def test_course_used_by_program_not_counted_toward_ge(sample_ge_html):
+    ge = parse_general_education_html(sample_ge_html, 21, 29462)
+    prog = _minimal_program(
+        blocks=[
+            RequirementBlock(
+                id="math_ge",
+                title="Quantitative",
+                root=CourseNode(course_id="MATH 125g"),
+            ),
+        ],
+    )
+    r = evaluate_program(prog, ["MATH 125g"], ge_catalog=ge)
+    assert r.blocks[0].status == "satisfied"
+    ge_f = next(x for x in r.general_education if x.code == "GE-F")
+    assert ge_f.matched_count == 0
+    assert ge_f.status == "unsatisfied"
 
 
 def test_evaluate_program_includes_ge_when_catalog_passed(sample_ge_html):

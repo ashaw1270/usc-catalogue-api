@@ -1,13 +1,19 @@
 """Advisory evaluation of program requirement trees and GE listings against taken courses.
 
 This does not replace degree checks: grades, transfer credit, AP, and full
-cross-counting rules from the catalogue are out of scope. GE evaluation counts
-eligible courses per letter category against the published lists; overlap_policy
-between categories is not enforced here.
+cross-counting rules from the catalogue are out of scope.
+
+Course allocation: each completed course applies to at most one non-GE program
+requirement block (catalogue order). GE categories are filled only from courses
+not used by those blocks. A course may count toward at most two GE letter areas
+when it appears on both lists and ``overlap_policy`` allows that pair; otherwise
+at most one GE area. Composition/writing blocks consume from the same pool, so a
+course used there cannot also count toward GE.
 """
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -17,7 +23,9 @@ from app.models import (
     AnyOfNode,
     CourseNode,
     GeneralEducationCatalog,
+    GeOverlapPolicy,
     Program,
+    RequirementBlock,
     RequirementNode,
     SelectNode,
     TextNode,
@@ -71,6 +79,7 @@ def _collect_courses(node: RequirementNode) -> list[CourseNode]:
 
 def _evaluate_select_explicit(
     node: SelectNode,
+    available: set[str],
     taken_set: frozenset[str],
 ) -> NodeEval:
     items = node.pool.items
@@ -80,22 +89,34 @@ def _evaluate_select_explicit(
     if not items and (min_c is None or min_c == 0) and (min_u is None or min_u <= 0):
         return NodeEval(status="satisfied", detail=None)
 
-    item_results = [_evaluate_node(ch, taken_set) for ch in items]
+    item_results: list[NodeEval] = []
+    for ch in items:
+        trial = set(available)
+        item_results.append(_evaluate_node_with_pool(ch, trial, taken_set))
     if any(r.status == "manual" for r in item_results):
         return NodeEval(
             status="manual",
             detail="This elective pool includes a rule that must be checked manually",
         )
 
-    units_sum = 0.0
-    for item in items:
-        for course in _collect_courses(item):
-            cid = normalize_course_id(course.course_id)
-            if cid in taken_set and course.units is not None:
-                units_sum += float(course.units)
-
+    if min_c is not None:
+        item_results = [_evaluate_node_with_pool(ch, available, taken_set) for ch in items]
     satisfied_items = sum(1 for r in item_results if r.status == "satisfied")
     has_partial_item = any(r.status == "partial" for r in item_results)
+
+    units_sum = 0.0
+    if min_u is not None and min_u > 0:
+        for item in items:
+            for course in _collect_courses(item):
+                cid = normalize_course_id(course.course_id)
+                if cid not in available or course.units is None:
+                    continue
+                units_sum += float(course.units)
+                available.discard(cid)
+                if units_sum >= min_u:
+                    break
+            if units_sum >= min_u:
+                break
 
     detail_parts: list[str] = []
     checks: list[bool] = []
@@ -129,18 +150,29 @@ def _evaluate_select_explicit(
     return NodeEval(status="unsatisfied", detail=detail)
 
 
-def _evaluate_node(node: RequirementNode, taken_set: frozenset[str]) -> NodeEval:
+def _evaluate_node_with_pool(
+    node: RequirementNode,
+    available: set[str],
+    taken_set: frozenset[str],
+) -> NodeEval:
+    """Evaluate a subtree; satisfied leaf courses are removed from *available* (shared pool)."""
     if isinstance(node, TextNode):
         return NodeEval(status="neutral", detail=node.text[:200] if node.text else None)
 
     if isinstance(node, CourseNode):
         cid = normalize_course_id(node.course_id)
-        if cid in taken_set:
+        if cid in available:
+            available.discard(cid)
             return NodeEval(status="satisfied", detail=cid)
+        if cid in taken_set:
+            return NodeEval(
+                status="unsatisfied",
+                detail=f"{cid} is already allocated to another requirement",
+            )
         return NodeEval(status="unsatisfied", detail=f"Need {node.course_id}")
 
     if isinstance(node, AllOfNode):
-        child_results = [_evaluate_node(c, taken_set) for c in node.children]
+        child_results = [_evaluate_node_with_pool(c, available, taken_set) for c in node.children]
         relevant = [r for r in child_results if r.status != "neutral"]
         if not relevant:
             return NodeEval(status="satisfied")
@@ -161,9 +193,17 @@ def _evaluate_node(node: RequirementNode, taken_set: frozenset[str]) -> NodeEval
     if isinstance(node, AnyOfNode):
         if not node.options:
             return NodeEval(status="satisfied")
-        results = [_evaluate_node(o, taken_set) for o in node.options]
-        if any(r.status == "satisfied" for r in results):
-            return NodeEval(status="satisfied")
+        snap = set(available)
+        for opt in node.options:
+            trial = set(available)
+            ev = _evaluate_node_with_pool(opt, trial, taken_set)
+            if ev.status == "satisfied":
+                available.clear()
+                available.update(trial)
+                return ev
+        available.clear()
+        available.update(snap)
+        results = [_evaluate_node_with_pool(o, set(snap), taken_set) for o in node.options]
         if any(r.status == "partial" for r in results):
             return NodeEval(status="partial")
         if any(r.status == "manual" for r in results):
@@ -187,9 +227,15 @@ def _evaluate_node(node: RequirementNode, taken_set: frozenset[str]) -> NodeEval
                 status="manual",
                 detail="Cannot auto-check: " + ", ".join(bits),
             )
-        return _evaluate_select_explicit(node, taken_set)
+        return _evaluate_select_explicit(node, available, taken_set)
 
     return NodeEval(status="unsatisfied", detail="Unknown node type")
+
+
+def _evaluate_node(node: RequirementNode, taken_set: frozenset[str]) -> NodeEval:
+    """Evaluate without cross-block allocation (full *taken_set* pool)."""
+    pool = set(taken_set)
+    return _evaluate_node_with_pool(node, pool, taken_set)
 
 
 BlockStatus = Literal["satisfied", "partial", "unsatisfied", "manual"]
@@ -240,26 +286,85 @@ def _block_status(ev: NodeEval) -> BlockStatus:
     return "unsatisfied"
 
 
+def _is_ge_placeholder_block(block: RequirementBlock) -> bool:
+    if block.kind == "ge":
+        return True
+    t = (block.title or "").strip().lower()
+    return t.startswith("general education")
+
+
+def _category_course_sets(catalog: GeneralEducationCatalog) -> dict[str, set[str]]:
+    return {cat.code: {normalize_course_id(c.course_id) for c in cat.courses} for cat in catalog.categories}
+
+
+def _ge_pair_allows_double_count(code_a: str, code_b: str, policy: GeOverlapPolicy) -> bool:
+    if code_a == code_b:
+        return False
+    for rule in policy.allowed_cross_count_rules:
+        if {rule.source_category, rule.target_category} == {code_a, code_b}:
+            return rule.max_shared_courses >= 1
+    if policy.no_other_double_counting:
+        return False
+    return True
+
+
+def _can_assign_course_to_ge_category(
+    cid: str,
+    cat_code: str,
+    lists: dict[str, set[str]],
+    assigned: dict[str, list[str]],
+    policy: GeOverlapPolicy,
+) -> bool:
+    if cid not in lists.get(cat_code, set()):
+        return False
+    have = assigned.get(cid, [])
+    if cat_code in have:
+        return False
+    if len(have) == 0:
+        return True
+    if len(have) >= 2:
+        return False
+    return _ge_pair_allows_double_count(have[0], cat_code, policy)
+
+
 def evaluate_general_education(
     catalog: GeneralEducationCatalog,
     taken: list[str],
+    *,
+    program_consumed: frozenset[str] | None = None,
 ) -> list[GeCategoryEvalSummary]:
-    """Count taken courses that appear on each GE category's course list."""
+    """Assign GE credit from *taken* with cross-category limits and program allocation."""
     taken_set = build_taken_set(taken)
+    consumed = frozenset(program_consumed) if program_consumed is not None else frozenset()
+    eligible = taken_set - consumed
+    lists = _category_course_sets(catalog)
+    policy = catalog.overlap_policy
+
+    assigned: dict[str, list[str]] = defaultdict(list)
+    per_cat: dict[str, list[str]] = {c.code: [] for c in catalog.categories}
+
+    sorted_cats = sorted(catalog.categories, key=lambda c: c.code)
+    for cat in sorted_cats:
+        rc = cat.required_count
+        pool_candidates = sorted(cid for cid in eligible if cid in lists.get(cat.code, set()))
+        for cid in pool_candidates:
+            if len(per_cat[cat.code]) >= rc:
+                break
+            if _can_assign_course_to_ge_category(cid, cat.code, lists, assigned, policy):
+                assigned[cid].append(cat.code)
+                per_cat[cat.code].append(cid)
+
     rows: list[GeCategoryEvalSummary] = []
-    for cat in catalog.categories:
-        matched: list[str] = []
+    for cat in sorted_cats:
+        matched = list(per_cat[cat.code])
         any_specific_only_match = False
-        for t in sorted(taken_set):
+        for cid in matched:
             flags = [
                 c.specific_students_only
                 for c in cat.courses
-                if normalize_course_id(c.course_id) == t
+                if normalize_course_id(c.course_id) == cid
             ]
-            if not flags:
-                continue
-            matched.append(t)
-            if all(flags):
+            if flags and all(flags):
                 any_specific_only_match = True
 
         n = len(matched)
@@ -271,7 +376,7 @@ def evaluate_general_education(
         else:
             st = "unsatisfied"
 
-        parts = [f"{n}/{rc} from this category's published list"]
+        parts = [f"{n}/{rc} from this category's published list (after program allocation)"]
         if matched:
             parts.append("Matched: " + ", ".join(matched))
         if any_specific_only_match:
@@ -300,9 +405,14 @@ def evaluate_program(
     ge_error: str | None = None,
 ) -> ProgramEvaluationResult:
     taken_set = build_taken_set(taken)
+    available = set(taken_set)
     blocks: list[BlockEvalSummary] = []
     for block in program.blocks:
-        ev = _evaluate_node(block.root, taken_set)
+        if _is_ge_placeholder_block(block):
+            trial = set(available)
+            ev = _evaluate_node_with_pool(block.root, trial, taken_set)
+        else:
+            ev = _evaluate_node_with_pool(block.root, available, taken_set)
         blocks.append(
             BlockEvalSummary(
                 id=block.id,
@@ -314,11 +424,14 @@ def evaluate_program(
                 detail=ev.detail,
             )
         )
+    program_consumed = frozenset(taken_set - available)
     ge_rows: list[GeCategoryEvalSummary] = []
     ge_year = ""
     ge_warnings: list[str] = []
     if ge_catalog is not None:
-        ge_rows = evaluate_general_education(ge_catalog, taken)
+        ge_rows = evaluate_general_education(
+            ge_catalog, taken, program_consumed=program_consumed
+        )
         ge_year = ge_catalog.catalog_year
         ge_warnings = list(ge_catalog.warnings)
     return ProgramEvaluationResult(

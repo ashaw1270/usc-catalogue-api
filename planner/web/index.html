@@ -196,10 +196,14 @@
     }
 
     function renderNormalBlock(b) {
-      let h = `<div class="block"><div class="summary-row">`;
+      const wrapClass = b.id === "free_electives" ? "block block-free-elective" : "block";
+      let h = `<div class="${wrapClass}"><div class="summary-row">`;
       h += `<h3>${escapeHtml(b.title)}</h3>`;
       h += `<span class="${badgeClass(b.status)}">${escapeHtml(statusLabel(b.status))}</span>`;
       h += `</div>`;
+      if (b.id === "free_electives") {
+        h += `<p class="detail free-el-note">Any USC course you have taken that was not counted toward another program requirement above may apply here.</p>`;
+      }
       if (b.detail) h += `<p class="detail">${escapeHtml(b.detail)}</p>`;
       h += `</div>`;
       return h;
@@ -213,6 +217,9 @@
         inner += `<h4>${escapeHtml(c.title)}</h4>`;
         inner += `<span class="${badgeClass(c.status)}">${escapeHtml(statusLabel(c.status))}</span>`;
         inner += `</div>`;
+        if (c.id === "free_electives") {
+          inner += `<p class="detail free-el-note">Any USC course you have taken that was not counted toward another program requirement above may apply here.</p>`;
+        }
         if (c.detail) inner += `<p class="detail">${escapeHtml(c.detail)}</p>`;
         inner += `</div>`;
       }

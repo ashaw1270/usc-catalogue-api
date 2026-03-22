@@ -173,12 +173,41 @@ def test_select_subject_pool_manual():
     assert r.blocks[0].detail and "auto-check" in r.blocks[0].detail.lower()
 
 
-def test_select_any_course_manual():
+def test_free_elective_uses_any_unused_course():
     prog = _minimal_program(
         blocks=[
             RequirementBlock(
-                id="free",
-                title="Free electives",
+                id="core",
+                title="Core",
+                root=CourseNode(course_id="CSCI 102L", units=2.0),
+            ),
+            RequirementBlock(
+                id="free_electives",
+                title="Free Electives (4 Units)",
+                min_units=4,
+                max_units=4,
+                kind="elective",
+                root=SelectNode(
+                    min_units=4.0,
+                    max_units=4.0,
+                    pool=Pool(kind="any_course"),
+                ),
+            ),
+        ],
+    )
+    r = evaluate_program(prog, ["CSCI 102L", "BUAD 101"])
+    assert r.blocks[0].status == "satisfied"
+    assert r.blocks[1].status == "satisfied"
+    assert r.blocks[1].id == "free_electives"
+    assert "BUAD 101" in (r.blocks[1].detail or "")
+
+
+def test_select_any_course_not_flagged_stays_manual():
+    prog = _minimal_program(
+        blocks=[
+            RequirementBlock(
+                id="pool",
+                title="Pick any courses",
                 root=SelectNode(
                     min_units=4.0,
                     pool=Pool(kind="any_course"),

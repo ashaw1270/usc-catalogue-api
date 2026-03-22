@@ -121,6 +121,7 @@ def test_parse_free_electives_block():
     free_block = next(b for b in program.blocks if "Free Electives" in b.title)
     from app.models import Pool, SelectNode
 
+    assert free_block.id == "free_electives"
     assert isinstance(free_block.root, SelectNode)
     assert free_block.root.min_units == 4.0
     assert isinstance(free_block.root.pool, Pool)

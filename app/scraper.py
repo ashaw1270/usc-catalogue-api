@@ -100,6 +100,17 @@ def _slug_from_title(title: str) -> str:
     return s or "block"
 
 
+# Headings like "Free Electives (4 Units)", "Open elective", etc. → JSON flag + any-course pool.
+_FREE_ELECTIVE_HEADING = re.compile(
+    r"\b(?:free|open|unrestricted)\s+electives?\b|\bgeneral\s+electives?\b",
+    re.I,
+)
+
+
+def _is_free_elective_title(title: str) -> bool:
+    return bool(_FREE_ELECTIVE_HEADING.search(title or ""))
+
+
 # Top-level catalogue headings that only group subsections (no own course lists), e.g. h2
 # "Pre-Major Requirements (30 Units)". Not used for track/OR containers like "Basic Science".
 _COLLAPSIBLE_PROGRAM_GROUP_HEADING = re.compile(r"^\s*(?:pre-major|major)\s+requirements\b", re.I)
@@ -540,7 +551,7 @@ def _section_to_requirement(section: _Section, bucket_id: str, config: Requireme
         )
 
     # Free electives by heading text.
-    if "free elective" in title.lower():
+    if _is_free_elective_title(title):
         mu, mx = _parse_units_from_title(title)
         return SelectNode(
             label=title,
@@ -677,7 +688,11 @@ def parse_program_html(html: str, catoid: int, poid: int, slug: str | None = Non
                 total_units = total_units or tot
                 continue
 
-            block_id = _slug_from_title(block_title)
+            block_id = (
+                "free_electives"
+                if _is_free_elective_title(block_title)
+                else _slug_from_title(block_title)
+            )
             root_node = _section_to_requirement(sec, bucket_id=block_id, config=config, include_children=True)
 
             # If this section is a “container” select/choice (and has no direct course list),

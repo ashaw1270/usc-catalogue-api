@@ -4,11 +4,12 @@ This does not replace degree checks: grades, transfer credit, AP, and full
 cross-counting rules from the catalogue are out of scope.
 
 Course allocation: each completed course applies to at most one non-GE program
-requirement block (catalogue order). GE categories are filled only from courses
-not used by those blocks. A course may count toward at most two GE letter areas
-when it appears on both lists and ``overlap_policy`` allows that pair; otherwise
-at most one GE area. Composition/writing blocks consume from the same pool, so a
-course used there cannot also count toward GE.
+requirement block (catalogue order), except free-elective blocks are filled last
+from any remaining courses. GE categories are filled only from courses not used
+by those blocks. A course may count toward at most two GE letter areas when it
+appears on both lists and ``overlap_policy`` allows that pair; otherwise at most
+one GE area. Composition/writing blocks consume from the same pool, so a course
+used there cannot also count toward GE.
 """
 from __future__ import annotations
 
@@ -286,6 +287,87 @@ def _block_status(ev: NodeEval) -> BlockStatus:
     return "unsatisfied"
 
 
+_DEFAULT_FREE_ELECTIVE_UNITS = 4.0
+_FREE_ELECTIVES_BLOCK_ID = "free_electives"
+
+
+def _units_by_course_in_program(program: Program) -> dict[str, float]:
+    """Map normalized course id → units from any CourseNode in the program (for free-elective estimates)."""
+    out: dict[str, float] = {}
+    for block in program.blocks:
+        for cn in _collect_courses(block.root):
+            if cn.units is not None:
+                out[normalize_course_id(cn.course_id)] = float(cn.units)
+    return out
+
+
+def _evaluate_free_elective_block(
+    block: RequirementBlock,
+    available: set[str],
+    taken_set: frozenset[str],
+    unit_by_course: dict[str, float],
+) -> NodeEval:
+    """Consume remaining *available* courses toward min/max units (open USC electives)."""
+    mu = block.min_units
+    mx = block.max_units
+    if isinstance(block.root, SelectNode):
+        root = block.root
+        if mu is None and root.min_units is not None:
+            mu = int(root.min_units)
+        if mx is None and root.max_units is not None:
+            mx = int(root.max_units)
+
+    need = float(mu) if mu is not None else 0.0
+    cap = float(mx) if mx is not None else None
+
+    if need <= 0 and (cap is None or cap <= 0):
+        return NodeEval(
+            status="satisfied",
+            detail="No unit requirement parsed for free electives; confirm in catalogue.",
+        )
+
+    target = need if need > 0 else (cap or 0.0)
+    used = 0.0
+    picked: list[str] = []
+
+    for cid in sorted(available):
+        if need > 0 and used >= need:
+            break
+        if cap is not None and used >= cap:
+            break
+        u = unit_by_course.get(cid, _DEFAULT_FREE_ELECTIVE_UNITS)
+        if cap is not None and used + u > cap:
+            continue
+        available.discard(cid)
+        picked.append(cid)
+        used += u
+        if need > 0 and used >= need:
+            break
+
+    assumption = (
+        f"Courses not listed with units elsewhere in this program are counted as "
+        f"{_DEFAULT_FREE_ELECTIVE_UNITS:g} units each (advisory)."
+    )
+    parts = [f"{used:g}/{target:g} elective units from unused courses", assumption]
+    if picked:
+        parts.insert(1, "Applied: " + ", ".join(picked))
+
+    detail = "; ".join(parts)
+    if need > 0:
+        if used >= need:
+            return NodeEval(status="satisfied", detail=detail)
+        if used > 0:
+            return NodeEval(status="partial", detail=detail)
+        return NodeEval(status="unsatisfied", detail=detail)
+
+    if cap is not None:
+        if used >= cap:
+            return NodeEval(status="satisfied", detail=detail)
+        if used > 0:
+            return NodeEval(status="partial", detail=detail)
+    return NodeEval(status="satisfied", detail=detail)
+
+
 def _is_ge_placeholder_block(block: RequirementBlock) -> bool:
     if block.kind == "ge":
         return True
@@ -406,24 +488,42 @@ def evaluate_program(
 ) -> ProgramEvaluationResult:
     taken_set = build_taken_set(taken)
     available = set(taken_set)
-    blocks: list[BlockEvalSummary] = []
+    unit_hints = _units_by_course_in_program(program)
+    summaries: dict[str, BlockEvalSummary] = {}
+
     for block in program.blocks:
+        if block.id == _FREE_ELECTIVES_BLOCK_ID:
+            continue
         if _is_ge_placeholder_block(block):
             trial = set(available)
             ev = _evaluate_node_with_pool(block.root, trial, taken_set)
         else:
             ev = _evaluate_node_with_pool(block.root, available, taken_set)
-        blocks.append(
-            BlockEvalSummary(
-                id=block.id,
-                title=block.title,
-                parent_id=block.parent_id,
-                parent_title=block.parent_title,
-                kind=block.kind,
-                status=_block_status(ev),
-                detail=ev.detail,
-            )
+        summaries[block.id] = BlockEvalSummary(
+            id=block.id,
+            title=block.title,
+            parent_id=block.parent_id,
+            parent_title=block.parent_title,
+            kind=block.kind,
+            status=_block_status(ev),
+            detail=ev.detail,
         )
+
+    for block in program.blocks:
+        if block.id != _FREE_ELECTIVES_BLOCK_ID:
+            continue
+        ev = _evaluate_free_elective_block(block, available, taken_set, unit_hints)
+        summaries[block.id] = BlockEvalSummary(
+            id=block.id,
+            title=block.title,
+            parent_id=block.parent_id,
+            parent_title=block.parent_title,
+            kind=block.kind,
+            status=_block_status(ev),
+            detail=ev.detail,
+        )
+
+    blocks = [summaries[b.id] for b in program.blocks]
     program_consumed = frozenset(taken_set - available)
     ge_rows: list[GeCategoryEvalSummary] = []
     ge_year = ""

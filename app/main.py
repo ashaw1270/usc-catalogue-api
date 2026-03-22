@@ -1,11 +1,19 @@
 """FastAPI application entrypoint."""
+from pathlib import Path
+
 import httpx
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.staticfiles import StaticFiles
 
 from app.cache import get_cache, get_ge_cache
 from app.catalog_config import resolve_slug
 from app.models import AnyOfNode, AllOfNode, CourseNode, GeneralEducationCatalog, Program, SelectNode
+from planner.requirement_eval import EvaluateBody, ProgramEvaluationResult, evaluate_program
 from app.scraper import fetch_general_education_catalog, fetch_program
+
+# GE listing used for planner /evaluate alongside the selected major program (USC catalogue IDs).
+GE_EVAL_CATOID = 21
+GE_EVAL_POID = 29462
 
 app = FastAPI(
     title="USC Catalogue API",
@@ -58,6 +66,40 @@ async def get_program_by_id(
         raise HTTPException(status_code=502, detail=f"Upstream error: {e!s}")
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"Upstream error: {e!s}")
+
+
+@app.post("/programs/evaluate", response_model=ProgramEvaluationResult)
+async def post_evaluate_program(
+    body: EvaluateBody,
+    catoid: int = Query(..., description="Catalog ID (e.g. 21 for 2025-2026)"),
+    poid: int = Query(..., description="Program object ID"),
+    force_refresh: bool = Query(False, description="Bypass cache and re-scrape"),
+):
+    """Evaluate how taken courses satisfy each requirement block (advisory only)."""
+    try:
+        program = await _get_program(catoid, poid, slug=None, force_refresh=force_refresh)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Program not found")
+        raise HTTPException(status_code=502, detail=f"Upstream error: {e!s}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Upstream error: {e!s}")
+
+    ge_catalog: GeneralEducationCatalog | None = None
+    ge_error: str | None = None
+    try:
+        ge_catalog = await _get_ge_catalog(GE_EVAL_CATOID, GE_EVAL_POID, force_refresh=force_refresh)
+    except httpx.HTTPStatusError as e:
+        ge_error = f"General education catalog unavailable (HTTP {e.response.status_code})."
+    except httpx.RequestError as e:
+        ge_error = f"General education catalog unavailable: {e!s}"
+
+    return evaluate_program(
+        program,
+        body.taken,
+        ge_catalog=ge_catalog,
+        ge_error=ge_error,
+    )
 
 
 @app.get("/programs/{slug}", response_model=Program)
@@ -154,3 +196,12 @@ async def get_ge_by_id(
         raise HTTPException(status_code=502, detail=f"Upstream error: {e!s}")
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"Upstream error: {e!s}")
+
+
+_planner_web_dir = Path(__file__).resolve().parent.parent / "planner" / "web"
+if _planner_web_dir.is_dir():
+    app.mount(
+        "/planner",
+        StaticFiles(directory=str(_planner_web_dir), html=True),
+        name="planner",
+    )

@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>USC program requirement checker</title>
+  <style>
+    :root {
+      font-family: system-ui, sans-serif;
+      line-height: 1.45;
+      color: #1a1a1a;
+      background: #f6f6f4;
+    }
+    body { max-width: 44rem; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.35rem; font-weight: 650; }
+    p.note { font-size: 0.9rem; color: #444; }
+    label { display: block; font-weight: 600; margin-top: 1rem; margin-bottom: 0.25rem; }
+    input[type="number"], textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.5rem 0.6rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font: inherit;
+    }
+    textarea { min-height: 8rem; resize: vertical; }
+    .row { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .row label { flex: 1; min-width: 8rem; }
+    button {
+      margin-top: 1.25rem;
+      padding: 0.55rem 1.1rem;
+      font: inherit;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      background: #7c2d12;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    #error { color: #b91c1c; margin-top: 1rem; white-space: pre-wrap; }
+    #program-meta { margin-top: 1rem; font-size: 0.95rem; }
+    #results { margin-top: 1.5rem; }
+    .block {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 0.65rem;
+      background: #fff;
+    }
+    .block h3 { margin: 0 0 0.35rem; font-size: 1rem; }
+    .badge {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+    }
+    .satisfied { background: #dcfce7; color: #14532d; }
+    .partial { background: #fef9c3; color: #713f12; }
+    .unsatisfied { background: #fee2e2; color: #7f1d1d; }
+    .manual { background: #e0e7ff; color: #312e81; }
+    .detail { margin: 0.4rem 0 0; font-size: 0.88rem; color: #444; }
+    .warnings { background: #fff7ed; border: 1px solid #fdba74; padding: 0.75rem; border-radius: 8px; margin-top: 1rem; font-size: 0.9rem; }
+    .section-title { font-size: 1.1rem; margin: 1.25rem 0 0.5rem; }
+    details.block.ge-dropdown { padding: 0; }
+    details.block.ge-dropdown > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+    }
+    details.block.ge-dropdown > summary::-webkit-details-marker { display: none; }
+    details.block.ge-dropdown > summary::before {
+      content: "";
+      display: inline-block;
+      width: 0.35em;
+      height: 0.35em;
+      border-right: 2px solid #444;
+      border-bottom: 2px solid #444;
+      transform: rotate(-45deg);
+      margin-right: 0.5rem;
+      vertical-align: 0.15em;
+      transition: transform 0.15s ease;
+    }
+    details.block.ge-dropdown[open] > summary::before {
+      transform: rotate(45deg);
+      vertical-align: 0.05em;
+    }
+    .ge-summary-inner {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.5rem 0.75rem;
+      width: calc(100% - 1.25rem);
+      vertical-align: top;
+    }
+    .ge-summary-inner h3 { margin: 0; font-size: 1rem; flex: 1 1 auto; }
+    .ge-panel {
+      padding: 0 1rem 0.85rem;
+      border-top: 1px solid #eee;
+    }
+    .ge-note { margin: 0.65rem 0 0.5rem; }
+    .ge-warn-inner { margin: 0.5rem 0; font-size: 0.88rem; }
+    .ge-sub {
+      border: 1px solid #e8e8e8;
+      border-radius: 6px;
+      padding: 0.55rem 0.75rem;
+      margin-top: 0.5rem;
+      background: #fafafa;
+    }
+    .ge-sub h4 { margin: 0 0 0.35rem; font-size: 0.92rem; font-weight: 650; }
+  </style>
+</head>
+<body>
+  <h1>Program requirement checker</h1>
+  <p class="note">Advisory only — not an official degree audit. Enter catalogue <strong>catoid</strong> and program <strong>poid</strong> (from catalogue.usc.edu URLs), then courses you have completed.</p>
+
+  <form id="form">
+    <div class="row">
+      <label>Catalog ID (catoid)
+        <input type="number" id="catoid" name="catoid" required placeholder="21">
+      </label>
+      <label>Program ID (poid)
+        <input type="number" id="poid" name="poid" required placeholder="29994">
+      </label>
+    </div>
+    <label>Courses taken <span style="font-weight:400;color:#666">(one per line, or comma-separated)</span>
+      <textarea id="taken" placeholder="CSCI 102L&#10;CSCI 103L&#10;WRIT 150"></textarea>
+    </label>
+    <button type="submit" id="submit">Check progress</button>
+  </form>
+
+  <div id="error" hidden></div>
+  <div id="program-meta"></div>
+  <div id="results"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function parseTaken(raw) {
+      return raw
+        .split(/[\n,;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+
+    function badgeClass(status) {
+      return "badge " + status;
+    }
+
+    function statusLabel(status) {
+      const map = {
+        satisfied: "Satisfied",
+        partial: "In progress",
+        unsatisfied: "Still needed",
+        manual: "Check manually",
+      };
+      return map[status] || status;
+    }
+
+    function aggregateGeStatus(categories) {
+      if (!categories || !categories.length) return null;
+      if (categories.every((c) => c.status === "satisfied")) return "satisfied";
+      if (categories.some((c) => c.status === "partial" || c.status === "satisfied")) return "partial";
+      return "unsatisfied";
+    }
+
+    function isGeBlock(b) {
+      return b.kind === "ge" || /^general\s+education/i.test(b.title || "");
+    }
+
+    function renderNormalBlock(b) {
+      let h = `<div class="block"><h3>${escapeHtml(b.title)}</h3>`;
+      h += `<span class="${badgeClass(b.status)}">${escapeHtml(statusLabel(b.status))}</span>`;
+      if (b.detail) h += `<p class="detail">${escapeHtml(b.detail)}</p>`;
+      h += `</div>`;
+      return h;
+    }
+
+    function renderGeDropdown(b, data) {
+      const cats = data.general_education || [];
+      let outerStatus;
+      if (data.ge_error) {
+        outerStatus = "manual";
+      } else if (cats.length) {
+        outerStatus = aggregateGeStatus(cats);
+      } else {
+        outerStatus = b.status;
+      }
+
+      let inner = "";
+      if (data.ge_error) {
+        inner += `<p class="detail ge-note">${escapeHtml(data.ge_error)}</p>`;
+      } else if (cats.length) {
+        inner += `<p class="detail ge-note">Compared to the GE course list (catoid 21, poid 29462)${data.ge_catalog_year ? " — " + escapeHtml(data.ge_catalog_year) : ""}. Cross-counting limits between areas are not enforced here.</p>`;
+        if (data.ge_warnings && data.ge_warnings.length) {
+          inner += `<div class="warnings ge-warn-inner"><strong>GE catalogue warnings</strong><ul>` +
+            data.ge_warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("") + `</ul></div>`;
+        }
+        for (const g of cats) {
+          inner += `<div class="ge-sub"><h4>${escapeHtml(g.code)} — ${escapeHtml(g.label)}</h4>`;
+          inner += `<span class="${badgeClass(g.status)}">${escapeHtml(statusLabel(g.status))}</span>`;
+          if (g.detail) inner += `<p class="detail">${escapeHtml(g.detail)}</p>`;
+          inner += `</div>`;
+        }
+      } else {
+        inner += `<p class="detail ge-note">GE category breakdown not available.</p>`;
+        if (b.detail) inner += `<p class="detail">${escapeHtml(b.detail)}</p>`;
+      }
+
+      let h = `<details class="block ge-dropdown"><summary><span class="ge-summary-inner">`;
+      h += `<h3>${escapeHtml(b.title)}</h3>`;
+      h += `<span class="${badgeClass(outerStatus)}">${escapeHtml(statusLabel(outerStatus))}</span>`;
+      h += `</span></summary><div class="ge-panel">${inner}</div></details>`;
+      return h;
+    }
+
+    $("form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      $("error").hidden = true;
+      const catoid = $("catoid").value;
+      const poid = $("poid").value;
+      const taken = parseTaken($("taken").value);
+      $("submit").disabled = true;
+      try {
+        const r = await fetch(
+          `/programs/evaluate?catoid=${encodeURIComponent(catoid)}&poid=${encodeURIComponent(poid)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ taken }),
+          }
+        );
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          throw new Error(typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail) || r.statusText);
+        }
+        const data = await r.json();
+        $("program-meta").innerHTML =
+          `<strong>${escapeHtml(data.title)}</strong><br><span style="color:#555">Catalog: ${escapeHtml(data.catalog_year || "")}</span>`;
+
+        let html = "";
+        if (data.program_warnings && data.program_warnings.length) {
+          html += `<div class="warnings"><strong>Catalogue warnings</strong><ul>` +
+            data.program_warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("") + `</ul></div>`;
+        }
+
+        html += `<h2 class="section-title">Program requirements</h2>`;
+
+        const blocks = Array.isArray(data.blocks) ? [...data.blocks] : [];
+        const hasGePayload =
+          (data.general_education && data.general_education.length) || !!data.ge_error;
+        if (!blocks.some(isGeBlock) && hasGePayload) {
+          blocks.unshift({
+            id: "_ge_synthetic",
+            title: "General Education",
+            kind: "ge",
+            status: "unsatisfied",
+            detail: null,
+          });
+        }
+
+        let geDropdownDone = false;
+        for (const b of blocks) {
+          if (isGeBlock(b)) {
+            if (geDropdownDone) continue;
+            geDropdownDone = true;
+            html += renderGeDropdown(b, data);
+            continue;
+          }
+          html += renderNormalBlock(b);
+        }
+
+        $("results").innerHTML = html || "<p>No requirement blocks returned.</p>";
+      } catch (e) {
+        $("error").textContent = String(e.message || e);
+        $("error").hidden = false;
+      } finally {
+        $("submit").disabled = false;
+      }
+    });
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+  </script>
+</body>
+</html>

@@ -17,10 +17,13 @@ uvicorn app.main:app --reload
 
 Then open http://127.0.0.1:8000/docs for the interactive API docs.
 
+The program requirement checker page is at http://127.0.0.1:8000/planner/ (files live under [`planner/web/`](planner/web/)).
+
 ## Endpoints
 
 - `GET /health` — Health check
 - `GET /programs/by-id?catoid=21&poid=29994` — Get program by catalogue and program ID
+- `POST /programs/evaluate?catoid=&poid=` — Body `{"taken":["CSCI 103L",...]}`: advisory progress vs program + GE listing (evaluation logic in [`planner/requirement_eval.py`](planner/requirement_eval.py))
 - `GET /programs/{slug}` — Get program by slug (e.g. `csci-bs`)
 - `GET /programs/{slug}/summary` — Summary (total units, course counts)
 - `GET /ge/by-id?catoid=21&poid=29462` — General Education course listings (by catalogue + GE program id)
@@ -31,7 +34,7 @@ Query params: `force_refresh=true` to bypass cache.
 
 ```bash
 pip install pytest pytest-asyncio
-pytest tests/ -v
+pytest -v
 ```
 
 ## Configuration
